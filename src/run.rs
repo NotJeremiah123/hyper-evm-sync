@@ -1,4 +1,5 @@
 use crate::{
+    cli::Chain,
     fs::snapshot_evm_state,
     precompile::set_replay_precompiles,
     state::{State, StateHash},
@@ -178,7 +179,7 @@ where
 }
 
 fn process_block<S>(
-    chain_id: u64,
+    chain: Chain,
     state: &mut S,
     erc20_contract_to_system_address: &BTreeMap<Address, Address>,
     block_and_receipts: BlockAndReceipts,
@@ -211,13 +212,15 @@ fn process_block<S>(
         Arc::new(res)
     };
 
-    deploy_system_contracts(state, block.number);
+    if let Chain::Mainnet = chain {
+        deploy_system_contracts(state, block.number);
+    }
 
     let mut cumulative_gas_used = 0;
     for (tx_index, system_tx) in system_txs.into_iter().enumerate() {
         let SystemTx { tx, receipt } = system_tx;
         let computed_receipt = apply_tx(ApplyTxArgs {
-            chain_id,
+            chain_id: chain_id(chain),
             block: &block,
             precompile_results: &precompile_results,
             sender: if tx.input().is_empty() {
@@ -243,7 +246,7 @@ fn process_block<S>(
     for (tx_index, (tx_signed, signer)) in txs {
         let transaction = &tx_signed.transaction;
         let receipt = apply_tx(ApplyTxArgs {
-            chain_id,
+            chain_id: chain_id(chain),
             block: &block,
             precompile_results: &precompile_results,
             sender: signer,
@@ -267,7 +270,7 @@ fn process_block<S>(
 #[allow(clippy::type_complexity)]
 pub fn run_blocks<S>(
     pb: Option<ProgressBar>,
-    chain_id: u64,
+    chain: Chain,
     state: &mut S,
     blocks: Vec<(u64, Vec<PreprocessedBlock>)>,
     erc20_contract_to_system_address: &BTreeMap<Address, Address>,
@@ -292,7 +295,7 @@ where
             }
             let BlockAndReceipts { block: EvmBlock::Reth115(block), .. } = &block_and_receipts;
             assert_eq!(block_num, block.number);
-            process_block(chain_id, state, erc20_contract_to_system_address, block_and_receipts, signers);
+            process_block(chain, state, erc20_contract_to_system_address, block_and_receipts, signers);
             if block_num % chunk_size == 0 || block_num == end_block {
                 let start = Instant::now();
                 let hash = state.blake3_hash_slow();
@@ -318,6 +321,13 @@ where
 
 pub const MAINNET_CHAIN_ID: u64 = 999;
 pub const TESTNET_CHAIN_ID: u64 = 998;
+
+pub const fn chain_id(chain: Chain) -> u64 {
+    match chain {
+        Chain::Mainnet => MAINNET_CHAIN_ID,
+        Chain::Testnet => TESTNET_CHAIN_ID,
+    }
+}
 
 const NATIVE_TOKEN_SYSTEM_ADDRESS: Address = address!("0x2222222222222222222222222222222222222222");
 const CORE_WRITER_ADDRESS: Address = address!("0x3333333333333333333333333333333333333333");

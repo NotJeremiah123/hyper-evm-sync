@@ -1,6 +1,9 @@
-use crate::types::{AbciState, BlockAndReceipts, EvmBlock, EvmState, PreprocessedBlock};
+use crate::{
+    cli::Chain,
+    types::{AbciState, BlockAndReceipts, EvmBlock, EvmState, PreprocessedBlock},
+};
 use anyhow::Result;
-use aws_config::{meta::region::RegionProviderChain, BehaviorVersion};
+use aws_config::{BehaviorVersion, Region};
 use aws_sdk_s3::{types::RequestPayer, Client};
 use futures::{stream, StreamExt, TryStreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -17,7 +20,7 @@ use std::{
 };
 
 const DOWNLOAD_CHUNK_SIZE: u64 = 10000;
-const CONCURRENCY_LIMIT: usize = 500;
+const CONCURRENCY_LIMIT: usize = 1000;
 
 fn decompress(data: &[u8]) -> Result<Vec<u8>, lz4_flex::frame::Error> {
     let mut decoder = lz4_flex::frame::FrameDecoder::new(data);
@@ -113,11 +116,6 @@ fn block_key(block_num: u64) -> String {
 async fn fetch_block(block_num: u64, dir: PathBuf, s3: Arc<Client>, pb: ProgressBar, bucket: &str) -> Result<()> {
     let key = block_key(block_num);
     let local_path: PathBuf = dir.join(&key);
-
-    if let Some(parent) = local_path.parent() {
-        create_dir_all(parent)?;
-    }
-
     if local_path.is_file() {
         pb.inc(1);
         return Ok(());
@@ -126,6 +124,9 @@ async fn fetch_block(block_num: u64, dir: PathBuf, s3: Arc<Client>, pb: Progress
     let obj = s3.get_object().bucket(bucket).key(key).request_payer(RequestPayer::Requester).send().await?;
 
     let mut body = obj.body.into_async_read();
+    if let Some(parent) = local_path.parent() {
+        create_dir_all(parent)?;
+    }
     let mut file = tokio::fs::File::create(&local_path).await?;
     tokio::io::copy(&mut body, &mut file).await?;
 
@@ -133,7 +134,7 @@ async fn fetch_block(block_num: u64, dir: PathBuf, s3: Arc<Client>, pb: Progress
     Ok(())
 }
 
-pub async fn download_blocks(dir: &str, start_block: u64, end_block: u64) -> Result<()> {
+pub async fn download_blocks(chain: Chain, dir: &str, start_block: u64, end_block: u64) -> Result<()> {
     let pb = ProgressBar::new(end_block - start_block + 1);
     pb.set_style(
         ProgressStyle::default_bar()
@@ -141,11 +142,14 @@ pub async fn download_blocks(dir: &str, start_block: u64, end_block: u64) -> Res
             .unwrap()
             .progress_chars("##-"),
     );
-    let region = RegionProviderChain::default_provider().or_else("us-east-1");
+    let region = Region::new("ap-northeast-1".to_string());
     let config = aws_config::defaults(BehaviorVersion::latest()).region(region).load().await;
     let s3 = Arc::new(Client::new(&config));
 
-    let bucket = "hl-mainnet-evm-blocks";
+    let bucket = match chain {
+        Chain::Mainnet => "hl-mainnet-evm-blocks",
+        Chain::Testnet => "hl-testnet-evm-blocks",
+    };
     let mut cur_block = start_block;
     while cur_block <= end_block {
         let next_block = (end_block + 1).min(cur_block + DOWNLOAD_CHUNK_SIZE);
@@ -165,6 +169,7 @@ pub async fn download_blocks(dir: &str, start_block: u64, end_block: u64) -> Res
 #[cfg(test)]
 mod tests {
     use crate::{
+        cli::Chain,
         fs::{download_blocks, read_abci_state, read_evm_state, snapshot_evm_state},
         state::State,
     };
@@ -174,7 +179,7 @@ mod tests {
     #[tokio::test]
     async fn test_block_download() -> Result<()> {
         let time = Instant::now();
-        download_blocks("hl-mainnet-evm-blocks", 4000000, 4001000).await?;
+        download_blocks(Chain::Mainnet, "hl-mainnet-evm-blocks", 4000000, 4001000).await?;
         println!("downloaded in {:?}", time.elapsed());
         Ok(())
     }
