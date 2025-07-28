@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 use crate::{
     evm_map::erc20_contract_to_system_address,
     fs::{download_blocks, read_abci_state, read_blocks, read_evm_state},
-    run::{chain_id, run_blocks},
+    run::run_blocks,
     state::State,
     types::PreprocessedBlock,
 };
@@ -116,7 +116,7 @@ async fn run_from_state(
     chunk_size: u64,
     end_block: u64,
 ) -> Result<()> {
-    let erc20_contract_to_system_address = erc20_contract_to_system_address(chain_id(chain)).await?;
+    let erc20_contract_to_system_address = erc20_contract_to_system_address(chain).await?;
     let (start_block, mut state) = if let Some(state_fln) = state_fln {
         if is_abci {
             read_abci_state(state_fln)?

@@ -29,6 +29,13 @@ fn decompress(data: &[u8]) -> Result<Vec<u8>, lz4_flex::frame::Error> {
     Ok(decompressed)
 }
 
+fn bucket(chain: Chain) -> &'static str {
+    match chain {
+        Chain::Mainnet => "hl-mainnet-evm-blocks",
+        Chain::Testnet => "hl-testnet-evm-blocks",
+    }
+}
+
 fn read_block_and_receipts(file_path: &Path) -> Result<BlockAndReceipts> {
     let mut file = File::open(file_path)?;
     let mut buffer = Vec::new();
@@ -69,7 +76,6 @@ pub fn read_blocks(dir: &str, start_block: u64, end_block: u64, chunk_size: u64)
                 PreprocessedBlock { block_num, block_and_receipts, signers }
             })
             .collect();
-        // let blocks = stream::iter(futures).buffered(CONCURRENCY_LIMIT).collect().await;
         println!("Deserialized blocks {}-{} in {:?}", start_block, end_block, start.elapsed());
         all_blocks.push((chunk, blocks));
     }
@@ -146,10 +152,8 @@ pub async fn download_blocks(chain: Chain, dir: &str, start_block: u64, end_bloc
     let config = aws_config::defaults(BehaviorVersion::latest()).region(region).load().await;
     let s3 = Arc::new(Client::new(&config));
 
-    let bucket = match chain {
-        Chain::Mainnet => "hl-mainnet-evm-blocks",
-        Chain::Testnet => "hl-testnet-evm-blocks",
-    };
+    let bucket = bucket(chain);
+
     let mut cur_block = start_block;
     while cur_block <= end_block {
         let next_block = (end_block + 1).min(cur_block + DOWNLOAD_CHUNK_SIZE);
